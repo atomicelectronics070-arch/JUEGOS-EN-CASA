@@ -1,12 +1,15 @@
 import express from 'express';
 import cors from 'cors';
-import initSqlJs from 'sql.js';
+import { createClient } from '@libsql/client';
 import multer from 'multer';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,28 +33,23 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-const dbPath = path.join(__dirname, 'database.db');
-
-let db;
+// Configuración de Turso
+const db = createClient({
+  url: process.env.DATABASE_URL || "file:database.db",
+  authToken: process.env.DATABASE_AUTH_TOKEN,
+});
 
 async function initDB() {
-    const SQL = await initSqlJs();
-    
-    if (fs.existsSync(dbPath)) {
-        const fileBuffer = fs.readFileSync(dbPath);
-        db = new SQL.Database(fileBuffer);
-    } else {
-        db = new SQL.Database();
-    }
-    
-    db.run(`
+    await db.execute(`
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
             role TEXT DEFAULT 'user'
         );
-        
+    `);
+    
+    await db.execute(`
         CREATE TABLE IF NOT EXISTS options (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             option_type TEXT NOT NULL,
@@ -61,7 +59,9 @@ async function initDB() {
             fecha_cita TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
-        
+    `);
+    
+    await db.execute(`
         CREATE TABLE IF NOT EXISTS citas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             option_type TEXT NOT NULL,
@@ -71,7 +71,9 @@ async function initDB() {
             fecha_cita TEXT,
             assigned_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
-        
+    `);
+    
+    await db.execute(`
         CREATE TABLE IF NOT EXISTS recuerdos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             cita_id INTEGER NOT NULL,
@@ -82,22 +84,25 @@ async function initDB() {
         );
     `);
     
-    const adminExists = db.exec("SELECT id FROM users WHERE username = 'admin'");
-    if (adminExists.length === 0 || adminExists[0].values.length === 0) {
+    const adminResult = await db.execute({
+        sql: "SELECT id FROM users WHERE username = ?",
+        args: ['admin']
+    });
+
+    if (adminResult.rows.length === 0) {
         const hashedPassword = bcrypt.hashSync('admin123', 10);
-        db.run("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", ['admin', hashedPassword, 'admin']);
-        db.run("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", ['user', hashedPassword, 'user']);
-        saveDB();
+        await db.execute({
+            sql: "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+            args: ['admin', hashedPassword, 'admin']
+        });
+        await db.execute({
+            sql: "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+            args: ['user', hashedPassword, 'user']
+        });
     }
 }
 
-function saveDB() {
-    const data = db.export();
-    const buffer = Buffer.from(data);
-    fs.writeFileSync(dbPath, buffer);
-}
-
-const SECRET_KEY = 'couples-game-secret-key-2024';
+const SECRET_KEY = process.env.SECRET_KEY || 'couples-game-secret-key-2024';
 
 const authenticate = (req, res, next) => {
     const token = req.headers.authorization?.split(' ')[1];
@@ -111,103 +116,116 @@ const authenticate = (req, res, next) => {
     }
 };
 
-app.post('/api/login', (req, res) => {
-    const { username, password } = req.body;
-    const result = db.exec("SELECT * FROM users WHERE username = ?", [username]);
-    
-    if (result.length === 0 || result[0].values.length === 0) {
-        return res.status(401).json({ error: 'Credenciales inválidas' });
+app.post('/api/login', async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        const result = await db.execute({
+            sql: "SELECT * FROM users WHERE username = ?",
+            args: [username]
+        });
+        
+        if (result.rows.length === 0) {
+            return res.status(401).json({ error: 'Credenciales inválidas' });
+        }
+        
+        const user = result.rows[0];
+        if (!bcrypt.compareSync(password, user.password)) {
+            return res.status(401).json({ error: 'Credenciales inválidas' });
+        }
+        
+        const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, SECRET_KEY, { expiresIn: '24h' });
+        res.json({ token, role: user.role, username: user.username });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
     }
-    
-    const userRow = result[0].values[0];
-    const user = {
-        id: userRow[0],
-        username: userRow[1],
-        password: userRow[2],
-        role: userRow[3]
-    };
-    
-    if (!bcrypt.compareSync(password, user.password)) {
-        return res.status(401).json({ error: 'Credenciales inválidas' });
+});
+
+app.get('/api/options', authenticate, async (req, res) => {
+    try {
+        const result = await db.execute("SELECT * FROM options ORDER BY option_type");
+        res.json(result.rows);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
     }
-    
-    const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, SECRET_KEY, { expiresIn: '24h' });
-    res.json({ token, role: user.role, username: user.username });
 });
 
-app.get('/api/options', authenticate, (req, res) => {
-    const result = db.exec("SELECT * FROM options ORDER BY option_type");
-    if (result.length === 0) return res.json([]);
-    
-    const columns = result[0].columns;
-    const options = result[0].values.map(row => {
-        const obj = {};
-        columns.forEach((col, i) => obj[col] = row[i]);
-        return obj;
-    });
-    res.json(options);
-});
+app.post('/api/options', authenticate, async (req, res) => {
+    try {
+        if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+        const { option_type, url, dedicatoria, fecha_invitacion, fecha_cita } = req.body;
+        
+        const existing = await db.execute({
+            sql: "SELECT id FROM options WHERE option_type = ?",
+            args: [option_type]
+        });
 
-app.post('/api/options', authenticate, (req, res) => {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin' });
-    const { option_type, url, dedicatoria, fecha_invitacion, fecha_cita } = req.body;
-    
-    const existing = db.exec("SELECT id FROM options WHERE option_type = ?", [option_type]);
-    if (existing.length > 0 && existing[0].values.length > 0) {
-        db.run(`UPDATE options SET url = ?, dedicatoria = ?, fecha_invitacion = ?, fecha_cita = ? WHERE option_type = ?`,
-            [url, dedicatoria, fecha_invitacion, fecha_cita, option_type]);
-    } else {
-        db.run(`INSERT INTO options (option_type, url, dedicatoria, fecha_invitacion, fecha_cita) VALUES (?, ?, ?, ?, ?)`,
-            [option_type, url, dedicatoria, fecha_invitacion, fecha_cita]);
+        if (existing.rows.length > 0) {
+            await db.execute({
+                sql: `UPDATE options SET url = ?, dedicatoria = ?, fecha_invitacion = ?, fecha_cita = ? WHERE option_type = ?`,
+                args: [url, dedicatoria, fecha_invitacion, fecha_cita, option_type]
+            });
+        } else {
+            await db.execute({
+                sql: `INSERT INTO options (option_type, url, dedicatoria, fecha_invitacion, fecha_cita) VALUES (?, ?, ?, ?, ?)`,
+                args: [option_type, url, dedicatoria, fecha_invitacion, fecha_cita]
+            });
+        }
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
     }
-    saveDB();
-    res.json({ success: true });
 });
 
-app.post('/api/assign-option', authenticate, (req, res) => {
-    const { option_type, url, dedicatoria, fecha_invitacion, fecha_cita } = req.body;
-    db.run(`INSERT INTO citas (option_type, url, dedicatoria, fecha_invitacion, fecha_cita) VALUES (?, ?, ?, ?, ?)`,
-        [option_type, url, dedicatoria, fecha_invitacion, fecha_cita]);
-    saveDB();
-    res.json({ success: true });
+app.post('/api/assign-option', authenticate, async (req, res) => {
+    try {
+        const { option_type, url, dedicatoria, fecha_invitacion, fecha_cita } = req.body;
+        await db.execute({
+            sql: `INSERT INTO citas (option_type, url, dedicatoria, fecha_invitacion, fecha_cita) VALUES (?, ?, ?, ?, ?)`,
+            args: [option_type, url, dedicatoria, fecha_invitacion, fecha_cita]
+        });
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
-app.get('/api/citas', authenticate, (req, res) => {
-    const result = db.exec("SELECT * FROM citas ORDER BY assigned_at DESC");
-    if (result.length === 0) return res.json([]);
-    
-    const columns = result[0].columns;
-    const citas = result[0].values.map(row => {
-        const obj = {};
-        columns.forEach((col, i) => obj[col] = row[i]);
-        return obj;
-    });
-    res.json(citas);
+app.get('/api/citas', authenticate, async (req, res) => {
+    try {
+        const result = await db.execute("SELECT * FROM citas ORDER BY assigned_at DESC");
+        res.json(result.rows);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
-app.post('/api/recuerdos', authenticate, upload.single('foto'), (req, res) => {
-    const { cita_id, titulo } = req.body;
-    const foto = req.file ? `/uploads/${req.file.filename}` : null;
-    db.run('INSERT INTO recuerdos (cita_id, titulo, foto) VALUES (?, ?, ?)', [cita_id, titulo, foto]);
-    saveDB();
-    res.json({ success: true });
+app.post('/api/recuerdos', authenticate, upload.single('foto'), async (req, res) => {
+    try {
+        const { cita_id, titulo } = req.body;
+        const foto = req.file ? `/uploads/${req.file.filename}` : null;
+        await db.execute({
+            sql: 'INSERT INTO recuerdos (cita_id, titulo, foto) VALUES (?, ?, ?)',
+            args: [cita_id, titulo, foto]
+        });
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
-app.get('/api/recuerdos', authenticate, (req, res) => {
-    const result = db.exec("SELECT * FROM recuerdos ORDER BY created_at DESC");
-    if (result.length === 0) return res.json([]);
-    
-    const columns = result[0].columns;
-    const recuerdos = result[0].values.map(row => {
-        const obj = {};
-        columns.forEach((col, i) => obj[col] = row[i]);
-        return obj;
-    });
-    res.json(recuerdos);
+app.get('/api/recuerdos', authenticate, async (req, res) => {
+    try {
+        const result = await db.execute("SELECT * FROM recuerdos ORDER BY created_at DESC");
+        res.json(result.rows);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 initDB().then(() => {
-    app.listen(3001, () => {
-        console.log('Server running on port 3001');
+    const PORT = process.env.PORT || 3001;
+    app.listen(PORT, () => {
+        console.log(`Server running on port ${PORT}`);
     });
+}).catch(err => {
+    console.error("Error al iniciar la base de datos:", err);
 });
