@@ -37,11 +37,12 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Ignorar requests de extensiones o no-HTTP
+  // Solo interceptamos GET
+  if (request.method !== 'GET') return;
   if (!request.url.startsWith('http')) return;
 
-  // API calls → Network First (intenta internet, si falla usa caché)
-  if (url.pathname.startsWith('/api') || url.hostname.includes('onrender.com') || url.hostname.includes('railway.app')) {
+  // API calls → Network First
+  if (url.pathname.startsWith('/api') || url.hostname.includes('onrender.com')) {
     event.respondWith(
       fetch(request)
         .then((response) => {
@@ -51,7 +52,11 @@ self.addEventListener('fetch', (event) => {
           }
           return response;
         })
-        .catch(() => caches.match(request))
+        .catch(async () => {
+          const cached = await caches.match(request);
+          if (cached) return cached;
+          return fetch(request); // Re-intento para que el navegador maneje el error
+        })
     );
     return;
   }
