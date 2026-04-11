@@ -1,12 +1,14 @@
 {
   "name": "Juegos en Casa",
   "short_name": "Juegos ❤️",
-  "description": "Para Andrea Leon, con amor",
+  "description": "Para Andrea, con amor ❤️",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f0a1e",
   "theme_color": "#ec4899",
   "orientation": "portrait-primary",
+  "lang": "es",
+  "categories": ["games", "lifestyle"],
   "icons": [
     {
       "src": "/icon-192.png",
@@ -20,8 +22,5 @@
       "type": "image/png",
       "purpose": "any maskable"
     }
-  ],
-  "screenshots": [],
-  "categories": ["games", "lifestyle"],
-  "lang": "es"
+  ]
 }
