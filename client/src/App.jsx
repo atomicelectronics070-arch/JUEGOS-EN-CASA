@@ -147,29 +147,64 @@ function SidebarBtn({ icon: Icon, label, active, onClick, badge }) {
 function SeriesView({ token }) {
   const [series, setSeries] = useState([]);
   const [newTitle, setNewTitle] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    try {
+      const res = await axios.get(`${API_URL}/series`, { headers: { Authorization: `Bearer ${token}` } });
+      setSeries(res.data);
+    } catch (e) {
+      console.error('Error cargando series:', e);
+      setError('Error al cargar series. ¿El servidor está corriendo?');
+    }
+  };
 
   useEffect(() => { load(); }, []);
-  const load = () => axios.get(`${API_URL}/series`, { headers: { Authorization: `Bearer ${token}` } }).then(res => setSeries(res.data));
 
-  const addSerie = async (e) => {
-    e.preventDefault();
-    if (!newTitle) return;
-    await axios.post(`${API_URL}/series`, { title: newTitle }, { headers: { Authorization: `Bearer ${token}` } });
-    setNewTitle(''); load();
+  const addSerie = async () => {
+    const trimmed = newTitle.trim();
+    if (!trimmed) {
+      setError('Escribe el nombre de la serie primero.');
+      setTimeout(() => setError(''), 2000);
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      await axios.post(`${API_URL}/series`, { title: trimmed }, { headers: { Authorization: `Bearer ${token}` } });
+      setNewTitle('');
+      await load();
+    } catch (e) {
+      console.error('Error añadiendo serie:', e);
+      setError('Error al guardar. ¿El servidor está corriendo en puerto 3001?');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const updateSerie = async (s, increment, is_finished_flag = null) => {
-    const data = { episodes_seen: increment ? s.episodes_seen + 1 : s.episodes_seen - 1, is_finished: is_finished_flag !== null ? is_finished_flag : s.is_finished };
-    if (data.episodes_seen < 0) data.episodes_seen = 0;
-    await axios.put(`${API_URL}/series/${s.id}`, data, { headers: { Authorization: `Bearer ${token}` } });
-    if(is_finished_flag === 1) triggerConfetti();
-    load();
+    const data = {
+      episodes_seen: increment ? s.episodes_seen + 1 : Math.max(0, s.episodes_seen - 1),
+      is_finished: is_finished_flag !== null ? is_finished_flag : s.is_finished
+    };
+    try {
+      await axios.put(`${API_URL}/series/${s.id}`, data, { headers: { Authorization: `Bearer ${token}` } });
+      if (is_finished_flag === 1) triggerConfetti();
+      await load();
+    } catch (e) {
+      console.error('Error actualizando serie:', e);
+    }
   };
 
   const deleteSerie = async (id) => {
-    if(!confirm('¿Eliminar serie de la lista?')) return;
-    await axios.delete(`${API_URL}/series/${id}`, { headers: { Authorization: `Bearer ${token}` } });
-    load();
+    if (!confirm('¿Eliminar serie de la lista?')) return;
+    try {
+      await axios.delete(`${API_URL}/series/${id}`, { headers: { Authorization: `Bearer ${token}` } });
+      await load();
+    } catch (e) {
+      console.error('Error eliminando serie:', e);
+    }
   };
 
   return (
@@ -180,34 +215,59 @@ function SeriesView({ token }) {
         <p className="text-gray-400">Controla por qué capítulo van o guárdalas para el recuerdo.</p>
       </header>
 
-      <form onSubmit={addSerie} className="flex gap-4 glass p-4 rounded-xl items-center">
-        <input value={newTitle} onChange={(e)=>setNewTitle(e.target.value)} type="text" placeholder="Escribe el nombre de la nueva serie..." className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-pink-500"/>
-        <button type="submit" className="px-6 py-3 bg-pink-500 hover:bg-pink-400 text-white rounded-xl font-bold flex items-center gap-2"><Plus/> Añadir Serie</button>
-      </form>
+      <div className="flex gap-4 glass p-4 rounded-xl items-center">
+        <input
+          value={newTitle}
+          onChange={(e) => setNewTitle(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && addSerie()}
+          type="text"
+          placeholder="Escribe el nombre de la nueva serie..."
+          className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-pink-500 transition-colors"
+        />
+        <button
+          onClick={addSerie}
+          disabled={loading}
+          className="px-6 py-3 bg-pink-500 hover:bg-pink-400 disabled:opacity-50 text-white rounded-xl font-bold flex items-center gap-2 transition-colors min-w-[140px] justify-center"
+        >
+          {loading ? (
+            <span className="animate-spin w-5 h-5 border-2 border-white border-t-transparent rounded-full inline-block" />
+          ) : (
+            <><Plus size={18}/> Añadir Serie</>
+          )}
+        </button>
+      </div>
+
+      {error && (
+        <div className="bg-red-500/20 border border-red-500/40 text-red-400 px-4 py-3 rounded-xl text-center font-medium">
+          {error}
+        </div>
+      )}
 
       <div className="space-y-4">
         {series.map(s => (
           <div key={s.id} className={`p-6 rounded-2xl flex items-center justify-between border ${s.is_finished ? 'bg-black/30 border-black/50 opacity-60' : 'glass border-pink-500/20 shadow-[0_0_15px_rgba(236,72,153,0.1)]'}`}>
-             <div>
-                <h3 className={`text-2xl font-bold mb-1 ${s.is_finished ? 'text-gray-400 line-through' : 'text-white'}`}>{s.title}</h3>
-                <p className="text-pink-400 text-sm font-bold flex items-center gap-2">
-                  <Play size={14}/> Capítulos Vistos: <span className="bg-white/10 text-white px-3 py-1 rounded-full text-lg">{s.episodes_seen}</span>
-                </p>
-             </div>
-             <div className="flex items-center gap-3">
-                {!s.is_finished && (
-                  <div className="flex flex-col gap-1 mr-4 border-r border-white/10 pr-4">
-                     <button onClick={()=>updateSerie(s, true)} className="px-3 py-1 bg-white/10 hover:bg-white/20 text-white rounded"><Plus size={16}/></button>
-                     <button onClick={()=>updateSerie(s, false)} className="px-3 py-1 bg-white/10 hover:bg-white/20 text-white rounded"><Minus size={16}/></button>
-                  </div>
-                )}
-                {!s.is_finished ? (
-                  <button onClick={()=>updateSerie(s, true, 1)} className="px-4 py-3 bg-green-500/20 text-green-400 hover:bg-green-500 hover:text-white rounded-xl font-bold flex items-center gap-2 border border-green-500/50 transition-colors"><CheckCircle size={18}/> Finalizado</button>
-                ): (
-                  <button onClick={()=>updateSerie(s, true, 0)} className="px-4 py-3 bg-white/5 text-gray-400 hover:bg-white/10 rounded-xl font-bold">Desmarcar</button>
-                )}
-                <button onClick={()=>deleteSerie(s.id)} className="p-3 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-xl transition-colors"><Trash2 size={20}/></button>
-             </div>
+            <div>
+              <h3 className={`text-2xl font-bold mb-1 ${s.is_finished ? 'text-gray-400 line-through' : 'text-white'}`}>{s.title}</h3>
+              <p className="text-pink-400 text-sm font-bold flex items-center gap-2">
+                <Play size={14}/> Capítulos Vistos: <span className="bg-white/10 text-white px-3 py-1 rounded-full text-lg">{s.episodes_seen}</span>
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              {!s.is_finished && (
+                <div className="flex flex-col gap-1 mr-4 border-r border-white/10 pr-4">
+                  <button onClick={() => updateSerie(s, true)} className="px-3 py-1 bg-white/10 hover:bg-white/20 text-white rounded transition-colors"><Plus size={16}/></button>
+                  <button onClick={() => updateSerie(s, false)} className="px-3 py-1 bg-white/10 hover:bg-white/20 text-white rounded transition-colors"><Minus size={16}/></button>
+                </div>
+              )}
+              {!s.is_finished ? (
+                <button onClick={() => updateSerie(s, true, 1)} className="px-4 py-3 bg-green-500/20 text-green-400 hover:bg-green-500 hover:text-white rounded-xl font-bold flex items-center gap-2 border border-green-500/50 transition-colors">
+                  <CheckCircle size={18}/> Finalizado
+                </button>
+              ) : (
+                <button onClick={() => updateSerie(s, true, 0)} className="px-4 py-3 bg-white/5 text-gray-400 hover:bg-white/10 rounded-xl font-bold transition-colors">Desmarcar</button>
+              )}
+              <button onClick={() => deleteSerie(s.id)} className="p-3 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-xl transition-colors"><Trash2 size={20}/></button>
+            </div>
           </div>
         ))}
         {series.length === 0 && <p className="text-center text-gray-500 py-10">No hay series. ¡Añade la primera!</p>}
