@@ -18,8 +18,15 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json());
+
+// Health check endpoint
+app.get('/api/health', (req, res) => res.json({ status: 'ok', time: new Date() }));
 
 // Cloudinary config (reads from env vars)
 cloudinary.config({
@@ -143,13 +150,27 @@ const authenticate = (req, res, next) => {
 app.post('/api/login', async (req, res) => {
     try {
         const { username, password } = req.body;
+        console.log(`Intento de login para usuario: ${username}`);
+        
         const result = await db.execute({ sql: "SELECT * FROM users WHERE username = ?", args: [username] });
-        if (result.rows.length === 0) return res.status(401).json({ error: 'Credenciales inválidas' });
+        if (result.rows.length === 0) {
+            console.log(`Usuario no encontrado: ${username}`);
+            return res.status(401).json({ error: 'Credenciales inválidas' });
+        }
+        
         const user = result.rows[0];
-        if (!bcrypt.compareSync(password, user.password)) return res.status(401).json({ error: 'Credenciales inválidas' });
+        if (!bcrypt.compareSync(password, user.password)) {
+            console.log(`Contraseña incorrecta para: ${username}`);
+            return res.status(401).json({ error: 'Credenciales inválidas' });
+        }
+        
         const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, SECRET_KEY, { expiresIn: '24h' });
+        console.log(`Login exitoso: ${username}`);
         res.json({ token, role: user.role, username: user.username });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { 
+        console.error('Error en /api/login:', e.message);
+        res.status(500).json({ error: e.message }); 
+    }
 });
 
 // --- CITAS & RECUERDOS & OPTIONS ---
@@ -372,8 +393,16 @@ Devuelve ÚNICAMENTE la cadena de texto de la pregunta (sin asteriscos, sin comi
     }
 });
 
+// Health check
+app.get('/health', (req, res) => res.status(200).send('OK'));
 
-initDB().then(() => {
-    const PORT = process.env.PORT || 3001;
-    app.listen(PORT, () => { console.log(\`Server running on port \${PORT}\`); });
-}).catch(err => { console.error("Error al iniciar la base de datos:", err); });
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    // Initialize DB in background to avoid blocking the server startup on Render
+    initDB().then(() => {
+        console.log("Base de datos inicializada correctamente");
+    }).catch(err => {
+        console.error("Error al iniciar la base de datos:", err);
+    });
+});
