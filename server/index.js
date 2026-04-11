@@ -9,6 +9,8 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import dotenv from 'dotenv';
 import axios from 'axios';
+import { v2 as cloudinary } from 'cloudinary';
+import { CloudinaryStorage } from 'multer-storage-cloudinary';
 
 dotenv.config();
 
@@ -19,20 +21,35 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-}
-app.use('/uploads', express.static(uploadsDir));
+// Cloudinary config (reads from env vars)
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
-const storage = multer.diskStorage({
+// Use Cloudinary if configured, else fall back to local disk
+let upload;
+if (process.env.CLOUDINARY_CLOUD_NAME) {
+  const cloudStorage = new CloudinaryStorage({
+    cloudinary,
+    params: { folder: 'juegos-en-casa', allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'webp'] },
+  });
+  upload = multer({ storage: cloudStorage });
+} else {
+  // Local fallback for development
+  const uploadsDir = path.join(__dirname, 'uploads');
+  if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+  app.use('/uploads', express.static(uploadsDir));
+  const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadsDir),
     filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, uniqueSuffix + path.extname(file.originalname));
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+      cb(null, uniqueSuffix + path.extname(file.originalname));
     }
-});
-const upload = multer({ storage });
+  });
+  upload = multer({ storage });
+}
 
 const db = createClient({
   url: process.env.DATABASE_URL || "file:database.db",
@@ -184,7 +201,12 @@ app.delete('/api/citas/:id', authenticate, async (req, res) => {
 app.post('/api/recuerdos', authenticate, upload.single('foto'), async (req, res) => {
     try {
         const { cita_id, titulo, unlock_date, lat, lng } = req.body;
-        const foto = req.file ? \`/uploads/\${req.file.filename}\` : null;
+        // Cloudinary returns req.file.path as a full HTTPS URL
+        // Local disk returns req.file.filename, we prefix with /uploads/
+        let foto = null;
+        if (req.file) {
+            foto = req.file.path || `/uploads/${req.file.filename}`;
+        }
         await db.execute({ sql: 'INSERT INTO recuerdos (cita_id, titulo, foto, unlock_date, lat, lng) VALUES (?, ?, ?, ?, ?, ?)', args: [cita_id, titulo, foto, unlock_date || null, lat || null, lng || null] });
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
