@@ -341,8 +341,8 @@ function OptionCard({ type, option, onChange, onSave, saved }) {
 function GameView({ token }) {
   const [options, setOptions] = useState([]);
   const [selectedCard, setSelectedCard] = useState(null);
-  const [revealed, setRevealed] = useState(false);
-  const [manualMode, setManualMode] = useState(false);
+  const [gameState, setGameState] = useState('prompt');
+  const [countdown, setCountdown] = useState(3);
 
   useEffect(() => {
     loadOptions();
@@ -353,12 +353,27 @@ function GameView({ token }) {
     setOptions(res.data);
   };
 
+  const startRandomFlow = () => {
+    setGameState('countdown');
+    setCountdown(3);
+  };
+
+  useEffect(() => {
+    if (gameState === 'countdown') {
+      if (countdown > 0) {
+        const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
+        return () => clearTimeout(timer);
+      } else {
+        setGameState('ready_random');
+      }
+    }
+  }, [gameState, countdown]);
+
   const selectRandom = () => {
     if (options.length === 0) return;
     const random = options[Math.floor(Math.random() * options.length)];
     setSelectedCard(random);
-    setRevealed(true);
-    setManualMode(false);
+    setGameState('revealed');
     assignOption(random);
   };
 
@@ -368,14 +383,13 @@ function GameView({ token }) {
 
   const selectManual = (option) => {
     setSelectedCard(option);
-    setRevealed(true);
+    setGameState('revealed');
     assignOption(option);
   };
 
   const reset = () => {
     setSelectedCard(null);
-    setRevealed(false);
-    setManualMode(false);
+    setGameState('prompt');
   };
 
   return (
@@ -391,136 +405,185 @@ function GameView({ token }) {
         <p className="text-gray-400">Descubre qué aventura te espera</p>
       </header>
 
-      <div className="flex justify-center gap-4">
-        <button
-          onClick={selectRandom}
-          disabled={revealed}
-          className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-pink-500 to-purple-600 text-white font-semibold disabled:opacity-50 hover:opacity-90 transition-opacity"
+      {gameState === 'prompt' && (
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="flex flex-col items-center justify-center p-12 glass rounded-3xl max-w-md mx-auto"
         >
-          <Shuffle size={20} /> Al Azar
-        </button>
-        <button
-          onClick={() => { setManualMode(!manualMode); setRevealed(false); setSelectedCard(null); }}
-          className={`flex items-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all ${
-            manualMode 
-              ? 'bg-white text-purple-900' 
-              : 'bg-white/10 text-white hover:bg-white/20'
-          }`}
-        >
-          <Hand size={20} /> Manual
-        </button>
-        {revealed && (
+          <h2 className="text-3xl font-bold text-white mb-8 text-center uppercase">¿Quieres Empezar?</h2>
           <button
-            onClick={reset}
-            className="flex items-center gap-2 px-6 py-3 rounded-xl bg-white/10 text-white font-semibold hover:bg-white/20"
+            onClick={() => setGameState('choose_mode')}
+            className="px-16 py-4 rounded-xl bg-gradient-to-r from-pink-500 to-purple-600 text-white font-bold text-2xl hover:scale-105 transition-transform"
           >
-            <X size={20} /> Reiniciar
+            SI
           </button>
-        )}
-      </div>
-
-      {manualMode && !revealed && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
-          {options.map(opt => (
-            <motion.button
-              key={opt.id}
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              onClick={() => selectManual(opt)}
-              className="p-6 rounded-2xl bg-gradient-to-br from-purple-900/50 to-pink-900/50 border border-white/10 hover:border-pink-500/50 transition-all group"
-            >
-              <div className="text-center">
-                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-white/10 flex items-center justify-center group-hover:bg-pink-500/20 transition-colors">
-                  <span className="text-3xl font-bold text-pink-400">{opt.option_type}</span>
-                </div>
-                <p className="text-gray-400 text-sm">Toca para revelar</p>
-              </div>
-            </motion.button>
-          ))}
-        </div>
+        </motion.div>
       )}
 
-      {!manualMode && !revealed && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
-          {['A', 'B', 'C'].map(type => (
-            <motion.div
-              key={type}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="card-3d h-80"
+      {gameState === 'choose_mode' && (
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="flex flex-col items-center justify-center p-12 glass rounded-3xl max-w-lg mx-auto"
+        >
+          <h2 className="text-2xl font-bold text-white mb-8 text-center uppercase">Escoge como quieres jugar</h2>
+          <div className="flex flex-col sm:flex-row gap-4 w-full">
+            <button
+              onClick={startRandomFlow}
+              className="flex-1 flex items-center justify-center gap-2 px-6 py-4 rounded-xl bg-gradient-to-r from-pink-500 to-purple-600 text-white font-semibold hover:scale-105 transition-transform"
             >
-              <div className="card-inner w-full h-full relative">
-                <div className="card-front absolute inset-0 rounded-2xl bg-gradient-to-br from-purple-900 to-pink-900 border border-white/10 flex items-center justify-center">
-                  <div className="text-center">
-                    <div className="w-24 h-24 mx-auto mb-4 rounded-full bg-white/10 flex items-center justify-center">
-                      <Heart className="w-12 h-12 text-pink-400" fill="currentColor" />
+              <Shuffle size={24} /> AL AZAR
+            </button>
+            <button
+              onClick={() => setGameState('playing_manual')}
+              className="flex-1 flex items-center justify-center gap-2 px-6 py-4 rounded-xl bg-white/10 text-white font-semibold hover:bg-white/20 transition-all hover:scale-105 border border-white/20"
+            >
+              <Hand size={24} /> MANUALMENTE
+            </button>
+          </div>
+        </motion.div>
+      )}
+
+      {gameState === 'countdown' && (
+        <motion.div 
+          key={countdown}
+          initial={{ opacity: 0, scale: 0.5 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 1.5 }}
+          className="flex flex-col items-center justify-center py-20"
+        >
+          <span className="text-9xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-purple-600 drop-shadow-2xl">
+            {countdown}
+          </span>
+        </motion.div>
+      )}
+
+      {gameState === 'ready_random' && (
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex flex-col items-center justify-center p-12 glass rounded-3xl max-w-xl mx-auto text-center"
+        >
+          <h2 className="text-2xl font-bold text-white mb-8 uppercase">OK, PRESIONA MEZCLAR PARA VER AL AZAR TU SELECCION</h2>
+          <button
+            onClick={selectRandom}
+            className="flex items-center gap-2 px-10 py-5 rounded-xl bg-gradient-to-r from-pink-500 to-purple-600 text-white font-bold text-2xl hover:scale-105 transition-transform shadow-[0_0_30px_rgba(236,72,153,0.5)]"
+          >
+            <Shuffle size={28} /> MEZCLAR
+          </button>
+        </motion.div>
+      )}
+
+      {gameState === 'playing_manual' && (
+        <motion.div
+           initial={{ opacity: 0 }}
+           animate={{ opacity: 1 }}
+           className="mt-8"
+        >
+          <div className="text-center mb-8">
+            <h2 className="text-2xl font-bold text-white uppercase">Selecciona tu tarjeta</h2>
+            <p className="text-gray-400">Elige con cuidado la opción que prefieras</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {options.map((opt, i) => (
+              <motion.button
+                key={opt.id}
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: i * 0.1 }}
+                onClick={() => selectManual(opt)}
+                className="card-3d h-80 w-full group"
+              >
+                <div className="card-inner w-full h-full relative cursor-pointer">
+                  <div className="card-front absolute inset-0 rounded-2xl bg-gradient-to-br from-purple-900 to-pink-900 border border-white/10 flex items-center justify-center group-hover:border-pink-500/50 transition-all">
+                    <div className="text-center">
+                      <div className="w-24 h-24 mx-auto mb-4 rounded-full bg-white/10 flex items-center justify-center group-hover:scale-110 group-hover:bg-pink-500/20 transition-all">
+                        <span className="text-5xl font-bold text-pink-400">{opt.option_type}</span>
+                      </div>
+                      <p className="text-gray-300 font-medium">Toca para elegir</p>
                     </div>
-                    <span className="text-4xl font-bold text-white/50">{type}</span>
                   </div>
                 </div>
-                <div className="card-back absolute inset-0 rounded-2xl bg-gradient-to-br from-purple-800 to-pink-800 border border-pink-500/30 flex items-center justify-center">
-                  <p className="text-white/50">?</p>
-                </div>
-              </div>
-            </motion.div>
-          ))}
-        </div>
+              </motion.button>
+            ))}
+          </div>
+        </motion.div>
       )}
 
       <AnimatePresence>
-        {revealed && selectedCard && (
+        {gameState === 'revealed' && selectedCard && (
           <motion.div
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="max-w-xl mx-auto mt-8"
+            className="max-w-xl mx-auto"
           >
-            <div className="glass rounded-3xl p-8 text-center">
+            <div className="glass rounded-3xl p-8 text-center relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-pink-500 to-purple-600" />
+              <button 
+                onClick={reset}
+                className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors"
+                title="Volver a empezar"
+              >
+                 <X size={24} />
+              </button>
+
               <motion.div
                 initial={{ scale: 0 }}
                 animate={{ scale: 1 }}
                 transition={{ type: 'spring', delay: 0.2 }}
-                className="w-24 h-24 mx-auto mb-6 rounded-full bg-gradient-to-br from-pink-500 to-purple-600 flex items-center justify-center"
+                className="w-24 h-24 mx-auto mb-6 rounded-full bg-gradient-to-br from-pink-500 to-purple-600 flex items-center justify-center shadow-[0_0_30px_rgba(236,72,153,0.3)]"
               >
                 <Sparkles className="w-12 h-12 text-white" />
               </motion.div>
               
-              <h2 className="text-2xl font-bold text-white mb-4">¡Felicidades!</h2>
+              <h2 className="text-3xl font-bold text-white mb-2">¡Felicidades!</h2>
+              <p className="text-pink-400 font-medium mb-6">Has seleccionado la Opción {selectedCard.option_type}</p>
               
-              <div className="space-y-4">
-                <div className="p-4 rounded-xl bg-white/5">
-                  <p className="text-gray-400 text-sm mb-1">URL</p>
+              <div className="space-y-4 text-left">
+                <div className="p-5 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors">
+                  <p className="text-gray-400 text-sm mb-2 flex items-center gap-2"><Sparkles size={16}/> Enlace Especial</p>
                   <a 
                     href={selectedCard.url} 
                     target="_blank" 
                     rel="noopener noreferrer"
-                    className="text-pink-400 hover:underline break-all"
+                    className="text-pink-400 hover:text-pink-300 hover:underline break-all font-medium"
                   >
                     {selectedCard.url}
                   </a>
                 </div>
                 
                 {selectedCard.dedicatoria && (
-                  <div className="p-4 rounded-xl bg-white/5">
-                    <p className="text-gray-400 text-sm mb-1">Dedicatoria</p>
-                    <p className="text-white italic">"{selectedCard.dedicatoria}"</p>
+                  <div className="p-5 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors">
+                    <p className="text-gray-400 text-sm mb-2 flex items-center gap-2"><Heart size={16}/> Dedicatoria</p>
+                    <p className="text-white italic leading-relaxed">"{selectedCard.dedicatoria}"</p>
                   </div>
                 )}
 
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="p-4 rounded-xl bg-white/5">
-                    <p className="text-gray-400 text-sm mb-1">Fecha Invitación</p>
-                    <p className="text-white flex items-center justify-center gap-2">
-                      <Calendar size={16} /> {selectedCard.fecha_invitacion || '-'}
+                  <div className="p-5 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors">
+                    <p className="text-gray-400 text-sm mb-2">Fecha Invitación</p>
+                    <p className="text-white flex items-center gap-2 font-medium">
+                      <Calendar size={18} className="text-pink-400" /> 
+                      {selectedCard.fecha_invitacion ? new Date(selectedCard.fecha_invitacion).toLocaleDateString() : '-'}
                     </p>
                   </div>
-                  <div className="p-4 rounded-xl bg-white/5">
-                    <p className="text-gray-400 text-sm mb-1">Fecha de Cita</p>
-                    <p className="text-white flex items-center justify-center gap-2">
-                      <Clock size={16} /> {selectedCard.fecha_cita || '-'}
+                  <div className="p-5 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors">
+                    <p className="text-gray-400 text-sm mb-2">Fecha de Cita</p>
+                    <p className="text-white flex items-center gap-2 font-medium">
+                      <Clock size={18} className="text-pink-400" /> 
+                      {selectedCard.fecha_cita ? new Date(selectedCard.fecha_cita).toLocaleDateString() : '-'}
                     </p>
                   </div>
                 </div>
               </div>
+
+              <button
+                onClick={reset}
+                className="mt-8 px-8 py-3 rounded-xl bg-white/10 text-white font-semibold hover:bg-white/20 transition-colors w-full border border-white/10"
+              >
+                Volver al Menú
+              </button>
             </div>
           </motion.div>
         )}
@@ -600,6 +663,13 @@ function RecuerdosView({ token }) {
   const [titulo, setTitulo] = useState('');
   const [foto, setFoto] = useState(null);
 
+  const getImageUrl = (path) => {
+    if (!path) return '';
+    if (path.startsWith('http')) return path;
+    const baseUrl = API_URL === '/api' ? `http://${window.location.hostname}:3001` : API_URL.replace('/api', '');
+    return `${baseUrl}${path}`;
+  };
+
   useEffect(() => {
     loadData();
   }, []);
@@ -623,7 +693,7 @@ function RecuerdosView({ token }) {
     if (foto) formData.append('foto', foto);
 
     await axios.post(`${API_URL}/recuerdos`, formData, {
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'multipart/form-data' }
+      headers: { Authorization: `Bearer ${token}` }
     });
 
     setTitulo('');
@@ -725,9 +795,10 @@ function RecuerdosView({ token }) {
                   {rec.foto && (
                     <div className="h-48 overflow-hidden">
                       <img 
-                        src={rec.foto} 
+                        src={getImageUrl(rec.foto)} 
                         alt={rec.titulo}
                         className="w-full h-full object-cover"
+                        onError={(e) => { e.target.onerror = null; e.target.src = 'https://via.placeholder.com/400x300?text=Imagen+Rota'; }}
                       />
                     </div>
                   )}
